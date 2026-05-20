@@ -99,6 +99,18 @@ class LoanApplicationServiceTest {
                 .isInstanceOf(BusinessException.class);
     }
 
+    @Test
+    void getStudentHistory_retourneLesPretsDeLetudiant() {
+        Book book = availableBook(1L);
+        Loan loan = activeLoan(1L, book);
+        when(loanRepository.findByStudentId("etudiant42")).thenReturn(java.util.List.of(loan));
+
+        var history = service.getStudentHistory("etudiant42");
+
+        assertThat(history).hasSize(1);
+        assertThat(history.get(0).getStudentId()).isEqualTo("etudiant42");
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private Book availableBook(Long id) {
