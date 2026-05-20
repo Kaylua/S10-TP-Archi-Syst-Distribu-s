@@ -1,53 +1,78 @@
-# TP1
+# TP2
 
-Application Spring Boot implémentant une base architecturale propre en couches pour une plateforme de gestion de prêts de livres universitaires.
+Passage du monolithe (TP1) vers une architecture distribuée composée de 3 services indépendants.
 
 ## Prérequis
 
 - Java 21
 - Maven 3.9+
 
-## Lancer l'application
-
-```bash
-mvn spring-boot:run
-```
-
-L'application démarre sur `http://localhost:8080`.
-
-La base de données H2 est en mémoire (réinitialisée à chaque démarrage).  
-Console H2 accessible sur `http://localhost:8080/h2-console` :
-- JDBC URL : `jdbc:h2:mem:librarydb`
-- User : `sa` / Password : *(vide)*
-
 ---
 
 ## Architecture
 
 ```
-com.esiea.library
-├── domain/          Entités métier et exception domaine
-│   ├── Book.java
-│   ├── Loan.java
-│   ├── LoanStatus.java
-│   └── BusinessException.java
-├── repository/      Interfaces Spring Data JPA
-│   ├── BookRepository.java
-│   └── LoanRepository.java
-├── application/     Couche service — règles métier
-│   ├── BookApplicationService.java
-│   └── LoanApplicationService.java
-└── web/             Couche HTTP — controllers et DTOs
-    ├── BookController.java
-    ├── LoanController.java
-    ├── ApiExceptionHandler.java
-    ├── BookResponse.java / CreateBookRequest.java
-    └── LoanResponse.java / CreateLoanRequest.java
+distributed-library/
+├── api-gateway/       port 8080 — point d'entrée unique (Spring Cloud Gateway)
+├── catalog-service/   port 8081 — gestion du catalogue de livres
+└── loan-service/      port 8082 — gestion des prêts (appelle catalog via Feign)
+```
+
+Chaque service possède sa propre base H2 en mémoire (pas de base partagée).
+
+### Flux inter-services
+
+```
+Client
+  │
+  ▼
+api-gateway :8080
+  ├── /api/books/**  ──────────► catalog-service :8081
+  │                                    │
+  └── /api/loans/**  ──────────► loan-service :8082
+                                       │
+                           Feign ──────┘
+                           /internal/books/{id}/availability
+                           /internal/books/{id}/borrow
+                           /internal/books/{id}/return
+```
+
+### Décisions architecturales clés
+
+- **Pas de base partagée** : chaque service gère ses propres données.
+- **Dénormalisation** : `loan-service` stocke `bookTitle` dans `Loan` pour éviter des appels réseau à la lecture.
+- **Endpoints internes** : `/internal/books/**` est réservé aux appels inter-services, non exposé via la gateway.
+- **Gestion des pannes** : les erreurs Feign sont interceptées et retournent `503 SERVICE_UNAVAILABLE` au client.
+
+---
+
+## Lancer les services
+
+Chaque service se lance indépendamment. L'ordre recommandé :
+
+```bash
+# Terminal 1 — catalog-service
+cd catalog-service
+mvn spring-boot:run
+
+# Terminal 2 — loan-service (nécessite catalog-service démarré)
+cd loan-service
+mvn spring-boot:run
+
+# Terminal 3 — api-gateway
+cd api-gateway
+mvn spring-boot:run
+```
+
+Ou depuis la racine pour compiler tout le projet :
+
+```bash
+mvn clean package -DskipTests
 ```
 
 ---
 
-## API REST
+## API REST (via la gateway — port 8080)
 
 ### Livres
 
@@ -64,17 +89,6 @@ com.esiea.library
   "title": "Clean Code",
   "author": "Robert Martin",
   "isbn": "978-0132350884"
-}
-```
-
-#### Réponse
-```json
-{
-  "id": 1,
-  "title": "Clean Code",
-  "author": "Robert Martin",
-  "isbn": "978-0132350884",
-  "available": true
 }
 ```
 
@@ -115,32 +129,40 @@ com.esiea.library
 
 - Un livre non disponible ne peut pas être emprunté → `400 Bad Request`
 - Retourner un prêt déjà clôturé est refusé → `400 Bad Request`
-- Les champs obligatoires manquants retournent un `400` avec le détail des erreurs
-
-#### Exemple d'erreur métier
-```json
-{ "error": "Ce livre n'est pas disponible à l'emprunt" }
-```
-
-#### Exemple d'erreur de validation
-```json
-{
-  "error": "Validation échouée",
-  "fields": { "title": "must not be blank" }
-}
-```
+- catalog-service indisponible → `503 Service Unavailable`
+- Livre introuvable dans le catalogue → `404 Not Found`
 
 ---
 
-## Scénario de test complet (Postman)
+## Consoles H2 (debug)
+
+| Service | URL | JDBC URL |
+|---|---|---|
+| catalog-service | http://localhost:8081/h2-console | `jdbc:h2:mem:catalogdb` |
+| loan-service | http://localhost:8082/h2-console | `jdbc:h2:mem:loandb` |
+
+User : `sa` / Password : *(vide)*
+
+---
+
+## Scénario de test complet (via gateway — port 8080)
 
 1. `POST /api/books` — ajouter "Clean Code"
-2. `POST /api/books` — ajouter "Design Patterns"
-3. `GET /api/books` — vérifier les 2 livres (`available: true`)
-4. `GET /api/books?q=clean` — recherche
-5. `POST /api/loans` avec `bookId: 1, studentId: "etudiant42"` — emprunt
-6. `GET /api/books/1` — vérifier `available: false`
-7. `POST /api/loans` avec `bookId: 1` à nouveau → doit retourner `400`
-8. `GET /api/loans/student/etudiant42` — historique
-9. `POST /api/loans/1/return` — retour du livre
-10. `GET /api/books/1` — vérifier `available: true`
+2. `GET /api/books` — vérifier le livre (`available: true`)
+3. `POST /api/loans` avec `bookId: 1, studentId: "etudiant42"` — emprunt
+4. `GET /api/books/1` — vérifier `available: false`
+5. `POST /api/loans` avec `bookId: 1` à nouveau → `400` (livre non disponible)
+6. `GET /api/loans/student/etudiant42` — historique
+7. `POST /api/loans/1/return` — retour du livre
+8. `GET /api/books/1` — vérifier `available: true`
+
+---
+
+## Tests
+
+```bash
+# Tests unitaires de catalog-service et loan-service
+mvn test -pl catalog-service,loan-service
+```
+
+11 tests unitaires : 5 `BookServiceTest` + 6 `LoanServiceTest` (CatalogClient mocké avec Mockito).
