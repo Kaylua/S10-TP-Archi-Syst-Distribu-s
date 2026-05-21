@@ -53,21 +53,21 @@ Chaque service se lance indépendamment. L'ordre recommandé :
 ```bash
 # Terminal 1 — catalog-service
 cd catalog-service
-mvn spring-boot:run
+../mvnw spring-boot:run
 
 # Terminal 2 — loan-service (nécessite catalog-service démarré)
 cd loan-service
-mvn spring-boot:run
+../mvnw spring-boot:run
 
 # Terminal 3 — api-gateway
 cd api-gateway
-mvn spring-boot:run
+../mvnw spring-boot:run
 ```
 
 Ou depuis la racine pour compiler tout le projet :
 
 ```bash
-mvn clean package -DskipTests
+./mvnw clean package -DskipTests
 ```
 
 ---
