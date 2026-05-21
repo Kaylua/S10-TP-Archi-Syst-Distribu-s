@@ -10,7 +10,7 @@ Application Spring Boot implémentant une base architecturale propre en couches 
 ## Lancer l'application
 
 ```bash
-mvn spring-boot:run
+./mvnw spring-boot:run
 ```
 
 L'application démarre sur `http://localhost:8080`.
